@@ -1,0 +1,199 @@
+---
+title:    "Artificial Intelligence: Predicting Excerises from Accelerometer Data"
+subtitle: "Practical Machine Learning Project 2"
+author:   "Leigh A. Matthews"
+date:     "May 19, 2016"
+output:    html_document
+---
+
+```{r setup, echo=FALSE}
+options(warn=-1)
+```
+
+##Executive Summary
+
+
+"One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants" [1].
+
+This report is written in R markdown, that is then rocessed by **knitr** and converted to an HTML file.  The dataset has many columns and predictions will be made, so this report uses random forests to build models.  This results in an out-of-sample error of 0.17%, which is very good. This model gave excellent prediction results with the testing dataset and generated the 20 test predictions to submit. Please note that the works cited in this report can be found in the Reference section. 
+
+
+##Background 
+
+"Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways" [1].
+
+The goal of this project is to predict the manner in which participants did the exercise, using the training set "classe" variable and others chosen predictors.  
+
+##Weight Lifting Exercises Dataset
+
+The human activity recognition research has traditionally focused on discriminating between different activities, i.e. to predict 'which' activity was performed at a specific point in time. The approach proposed for the Weight Lifting Exercises dataset is to investigate "how (well)" an activity was performed by the wearer. The "how (well)" investigation has only received little attention so far, even though it potentially provides useful information for a large variety of applications, such as sports training [2].
+
+We first define quality of execution and investigate three aspects that pertain to qualitative activity recognition: the problem of specifying correct execution, the automatic and robust detection of execution mistakes, and how to provide feedback on the quality of execution to the user. An on-body sensing approach was tried, but also an "ambient sensing approach" [2].
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. Participants were supervised by an experienced weight lifter to make sure the execution complied to the manner they were supposed to simulate. The exercises were performed by six male participants aged between 20-28 years, with little weight lifting experience. We made sure that all participants could easily simulate the mistakes in a safe and controlled manner by using a relatively light dumbbell (1.25kg)." [2].
+
+
+![Figure 1: On Body Sensing Schema](C:\Users\20292\Documents\Coursera Files\Practical Machine Learning\Course Project 2\on-body-sensing-schema.png)
+
+
+
+####Data
+
+The training data for this project are available at <*https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv*> and the test data are available at <*https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv*>.  The data for this project come from [Reference 2](http://groupware.les.inf.puc-rio.br/har). 
+
+## Method - Random Forests
+The analysis section consists of
+
+ 1. Building a model and explaining how it was done.
+ 2. Predicting how they did the exercise using the "classe" variable in the training set and any other predictor variables. 
+ 3. Explaining how cross validation was used
+ 4. Showing what the expected out-of sample-error is
+ 5. Explanation of choices. 
+ 6. Use the prediction model to predict 20 different cases from the test dataset.
+
+
+
+## Pre-Processing the Data
+
+Load the required packages into the R environment and set the working directory.
+```{r warning=FALSE, message=FALSE}
+library(caret)
+library(randomForest)
+setwd("C:/Users/20292/Documents/Coursera Files/Practical Machine Learning/Course Project 2")
+```
+
+The objective of this analysis is to predict the manner in which six participants did the exercise. They performed the excercise in five different ways; one exactly follows the specification, and the other four follow the specification incorrect way.
+
+Set the working directory and download the testing and training datasets from the website.
+
+```{r downloadData}
+if (!file.exists("training_data.csv")) {  
+     fileURL  = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+     destfile = "~/training_data.csv"
+     download.file(fileURL, destfile) }
+if (!file.exists("testing_data.csv")) {
+     fileURL  = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+     destfile = "~/testing_data.csv"
+     download.file(fileURL, destfile) }
+```
+
+
+Load the data into R Studio as data frames. 
+```{r LoadData}
+testing.raw <- read.csv("C:/Users/20292/Documents/Coursera Files/Practical Machine Learning/Course Project 2/testing_data.csv", sep = ",") 
+training.raw <- read.csv("C:/Users/20292/Documents/Coursera Files/Practical Machine Learning/Course Project 2/training_data.csv", sep = ",") 
+```
+
+
+##Data Processing and Partitioning
+
+After loading the data, set the seed value and create partitions of the raw training dataset to create a training set and testing (validating) set to estimate the out-of-sample error.  Before fitting a model, the training data are split into two parts; one for training the model, and the other for the cross validation and finding the out-of-sample error.  Approximately 60% of the data as the training data, and 40% as the cross validation.
+
+
+
+
+```{r partition, message=FALSE, warning=FALSE}
+library(caret)
+set.seed(13)
+inTrain = createDataPartition(training.raw$classe, p=0.70, list=FALSE)
+training = training.raw[inTrain,]
+testing = training.raw[-inTrain,]
+```
+
+
+Reduce the number of features in the data by removing variables with nearly zero variance, variables that are mainly NA, and variables that are not related to this prediction. Note that I decide which ones to remove by analyzing my training set, and perform the identical removals on the testing set. First, removfe variables with nearly zero variance.
+
+```{r}
+nzv <- nearZeroVar(training)
+training <- training[, -nzv]
+testing  <- testing[, -nzv]
+```
+
+Now remove any variables with mainly NA values. 
+```{r}
+mostlyNA <- sapply(training, function(x) mean(is.na(x))) > 0.95
+training <- training[, mostlyNA == FALSE]
+testing  <- testing[, mostlyNA == FALSE]
+```
+
+Finally, remove variables that are not related to this analysis (X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp), which are the first five variables.
+
+```{r}
+training <- training[ ,-(1:5)]
+testing  <- testing[, -(1:5)]
+```
+
+
+##Model Building 
+
+Begin the analysis by building a Random Forest model and check it's performance.  Fit the model on the training set and use the *train* function from the {caret} package for 3-fold cross-validation; this will select the optimal tuning model parameters.
+
+First, instruct the train function to use 3-fold cross validation and fit the model on the training set.  Then print the model to see the chosen parameters. 
+```{r fitModel, message=FALSE, warning=FALSE, cache=TRUE}
+library(randomForest)
+model.set <- trainControl(method = "cv", number = 3, verboseIter = FALSE)
+fit <- train(classe ~ ., data=training, method="rf", trControl = model.set)
+fit$finalModel
+```
+
+The output shows that the chosen parameters are 500 tree with 27 variables tried at each split. 
+
+
+
+
+##Model Evaluation and Model Selection
+
+Use the fitted model to predict the exercise type ("classe") in the testing set and show the confusion matrix comparing the predicted values and the actual "class" values to get the out-of-sample error.
+
+```{r}
+prediction <- predict(fit, newdata = testing)
+confusionMatrix(testing$class, prediction)
+```
+
+
+The output shows the accuracy of the Random Forest model is 99.83%, which means the predicted accuracy for the out-of-sample error is 0.17%.  Since the accuracy is so high and the error so low, Random Forest modeling works well and can be used on the raw test dataset.
+
+
+## Re-Training the Random Forest Model
+
+Before making predictions on the test set, the model needs to be re-trained on the full training dataset, rather than a reduced training set in order to produce the most accurate predictions. Thus, repeat the above training and model fitting performed above. 
+
+```{r pred2, cache=TRUE}
+nzv <- nearZeroVar(training.raw)          # remove variables with zero variance
+training <- training.raw[, -nzv]
+testing <-  testing.raw[, -nzv]
+mostlyNA <- sapply(training, function(x) mean(is.na(x))) > 0.95   # remove NA variables
+training <- training[, mostlyNA == F]
+testing  <- testing[, mostlyNA == F]
+training <- training[, -(1:5)]            # remove extra variables 
+testing  <- testing[, -(1:5)]
+# Re-fit the model using full training set 
+fit.set <- trainControl(method = "cv", number = 3, verboseIter = FALSE)
+fit <- train(classe ~ ., data = training, method = "rf", trControl = fit.set)
+```
+
+#Predictions with the Testing Dataset
+
+Use the model that was fit on the training set to predict the "class" for the observations in the testing dataset and convert them to characters. 
+
+```{r predictResults}
+pred <- predict(fit, newdata = testing)
+( pred <- as.character(pred) )
+```
+
+The predictions for the testing set above have an expected accuracy of about 0.2%.  
+
+# Conclusion
+
+The predictions have been made on the testing dataset and have a high accuracy using a Random Forest modeling approach.  The predictions are evaluated separately via an online Coursera quiz. Due to the high level of accuracy, the predictions are assumed to be correct.
+
+******************************************************************************************
+
+#References
+
+ 1. "Prediction Assignment Writeup." Practical Machine Learning. Coursera, n.d. Web. 26 May 2016. 
+     <https://www.coursera.org/learn/practical-machine-learning/peer/R43St/prediction-assignment-writeup>. 
+ 2. Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13). Stuttgart, Germany: ACM SIGCHI, 2013. Web version <http://groupware.les.inf.puc-rio.br/har>.
+
